@@ -36,23 +36,6 @@ async def connect_to_db():
     )
     print("✅ Connecté à PostgreSQL")
 
-# --- STATUTS CYCLING ---
-statuts = [
-    "🏷️ des TAG EXCLUSIF",
-    "🗣️ UN SERVEUR ACTIF",
-    "🌐 UN SERVEUR INTERNATIONNAL",
-    "🔗 Filial de SEVERVER'S HUB"
-]
-status_cycle = itertools.cycle(statuts)
-
-@tasks.loop(seconds=10)
-async def changer_status():
-    activity = discord.Streaming(
-        name=next(status_cycle),
-        url="https://twitch.tv/hvk_mairox"
-    )
-    await bot.change_presence(activity=activity)
-
 # --- DATABASE SETUP ---
 async def setup_database():
     async with db.acquire() as connection:
