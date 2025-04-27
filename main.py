@@ -6,9 +6,10 @@ import itertools
 from discord import Embed
 import os
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-OWNER_ROLE_ID = 1364134027585523772
-LOG_ID = 1365709885693493318
+TOKEN = os.getenv("DISCORD_TOKEN")  # protection token ✅
+
+# Liste des utilisateurs autorisés
+AUTHORIZED_USERS = [803209433022201866, 770642066534957116, 1347996811159408791]
 
 # Infos PostgreSQL
 DB_USER = os.getenv("PGUSER")
@@ -76,9 +77,8 @@ async def setup_database():
         """)
 
 # --- UTILITIES ---
-async def has_role_by_id(interaction: discord.Interaction, role_id: int):
-    role = discord.utils.get(interaction.guild.roles, id=role_id)
-    return role and role in interaction.user.roles
+async def has_permission(interaction: discord.Interaction):
+    return interaction.user.id in AUTHORIZED_USERS
 
 async def refresh_all_directories():
     async with db.acquire() as connection:
@@ -105,7 +105,7 @@ async def refresh_all_directories():
 # --- COMMANDS ---
 
 @bot.tree.command(name="news_msg", description="📨 | ENVOIE LA LISTE DES TAGS")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
+@app_commands.check(has_permission)
 async def news_msg(interaction: discord.Interaction, intro: str, outro: str):
     await interaction.response.defer()
     async with db.acquire() as connection:
@@ -123,25 +123,17 @@ async def news_msg(interaction: discord.Interaction, intro: str, outro: str):
     await interaction.followup.send("Répertoire créé et synchronisé ✅", ephemeral=True)
 
 @bot.tree.command(name="tag_add", description="➕ | Ajouter un tag")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
+@app_commands.check(has_permission)
 async def tag_add(interaction: discord.Interaction, name: str, emoji: str, position: int, link: str, comment: str = None):
     await interaction.response.defer()
 
+    # Anti-duplication de lien
     async with db.acquire() as connection:
-        # Vérification anti-duplication par le lien
-        duplicate = await connection.fetchrow("""
-            SELECT * FROM tags
-            WHERE link = $1
-        """, link)
-
-        if duplicate:
-            await interaction.followup.send(
-                "❌ Ce TAG existe déja",
-                ephemeral=True
-            )
+        existing_tag = await connection.fetchrow("SELECT * FROM tags WHERE link = $1", link)
+        if existing_tag:
+            await interaction.followup.send("❌ Ce lien est déjà enregistré dans un tag existant.", ephemeral=True)
             return
 
-        # Insertion normale
         await connection.execute("UPDATE tags SET position = position + 1 WHERE position >= $1", position)
         await connection.execute("""
             INSERT INTO tags (position, emoji, name, link, comment)
@@ -149,10 +141,10 @@ async def tag_add(interaction: discord.Interaction, name: str, emoji: str, posit
         """, position, emoji, name, link, comment)
 
     await refresh_all_directories()
-    await interaction.followup.send(f"✅ Tag **{name}** ajouté avec succès.", ephemeral=True)
+    await interaction.followup.send(f"Tag **{name}** ajouté ✅", ephemeral=True)
 
 @bot.tree.command(name="remove_tag", description="🗑️ | Supprimer un tag existant")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
+@app_commands.check(has_permission)
 async def remove_tag(interaction: discord.Interaction, position: int):
     await interaction.response.defer()
     async with db.acquire() as connection:
@@ -168,7 +160,7 @@ async def remove_tag(interaction: discord.Interaction, position: int):
     await interaction.followup.send(f"✅ Tag position **{position}** supprimé.", ephemeral=True)
 
 @bot.tree.command(name="tag", description="📦 | Livrée le Liens d'un TAGS")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
+@app_commands.check(has_permission)
 async def show_tags(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     async with db.acquire() as connection:
@@ -193,7 +185,6 @@ async def show_tags(interaction: discord.Interaction):
     await interaction.followup.send("Voici tous les tags disponibles :", view=view)
 
 @bot.tree.command(name="tuto", description="🧐 | Dire aux gens comment Installer un TAG")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
 async def tuto(interaction: discord.Interaction):
     embed = Embed(
         title="Personnalisation du Profil",
