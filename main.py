@@ -6,7 +6,7 @@ import itertools
 from discord import Embed
 import os
 
-TOKEN = "MTM2NDYyMTI4NDYyNDgyNjQ4OQ.G_D73O.CkjCDjNYYEFpg1yXr8LQs9o5cI8Cangn6Rxn3U"
+TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_ID = 1364134027585523772
 LOG_ID = 1365709885693493318
 
@@ -126,7 +126,22 @@ async def news_msg(interaction: discord.Interaction, intro: str, outro: str):
 @app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
 async def tag_add(interaction: discord.Interaction, name: str, emoji: str, position: int, link: str, comment: str = None):
     await interaction.response.defer()
+
     async with db.acquire() as connection:
+        # Vérification anti-duplication par le lien
+        duplicate = await connection.fetchrow("""
+            SELECT * FROM tags
+            WHERE link = $1
+        """, link)
+
+        if duplicate:
+            await interaction.followup.send(
+                "❌ Ce TAG existe déja",
+                ephemeral=True
+            )
+            return
+
+        # Insertion normale
         await connection.execute("UPDATE tags SET position = position + 1 WHERE position >= $1", position)
         await connection.execute("""
             INSERT INTO tags (position, emoji, name, link, comment)
@@ -134,7 +149,7 @@ async def tag_add(interaction: discord.Interaction, name: str, emoji: str, posit
         """, position, emoji, name, link, comment)
 
     await refresh_all_directories()
-    await interaction.followup.send(f"Tag **{name}** ajouté ✅", ephemeral=True)
+    await interaction.followup.send(f"✅ Tag **{name}** ajouté avec succès.", ephemeral=True)
 
 @bot.tree.command(name="remove_tag", description="🗑️ | Supprimer un tag existant")
 @app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
