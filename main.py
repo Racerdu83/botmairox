@@ -6,7 +6,7 @@ import itertools
 import os
 
 # --- Variables d'environnement pour PostgreSQL ---
-DATABASE_URL = f"postgresql://postgres:FefacmmQARoFgNdiEiLomPTDXkAYuTje@trolley.proxy.rlwy.net:12111/railway
+DATABASE_URL = f"postgresql://PGPASSWORD=FefacmmQARoFgNdiEiLomPTDXkAYuTje psql -h trolley.proxy.rlwy.net -U postgres -p 12111 -d railway
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_ID = 1364134027585523772
