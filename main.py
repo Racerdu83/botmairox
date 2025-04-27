@@ -43,7 +43,6 @@ async def setup_database():
                 emoji TEXT,
                 name TEXT,
                 link TEXT,
-                comment TEXT
             );
         """)
 
