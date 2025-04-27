@@ -31,15 +31,6 @@ async def setup_database():
                 message_id BIGINT
             );
         """)
-        await connection.execute("""
-            CREATE TABLE IF NOT EXISTS tags (
-                id SERIAL PRIMARY KEY,
-                position INTEGER,
-                emoji TEXT,
-                name TEXT,
-                link TEXT,
-            );
-        """)
 
 # Vérification du rôle du propriétaire
 async def has_role_by_id(interaction: discord.Interaction, role_id: int):
