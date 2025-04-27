@@ -6,12 +6,7 @@ import itertools
 import os
 
 # --- Variables d'environnement pour PostgreSQL ---
-PGUSER = os.getenv("PGUSER")
-PGPASSWORD = os.getenv("PGPASSWORD")
-PGHOST = os.getenv("PGHOST")
-PGPORT = os.getenv("PGPORT")
-PGDATABASE = os.getenv("PGDATABASE")
-DATABASE_URL = f"postgresql://{PGUSER}:{PGPASSWORD}@{PGHOST}:{PGPORT}/{PGDATABASE}"
+DATABASE_URL = f"postgresql://postgres:FefacmmQARoFgNdiEiLomPTDXkAYuTje@trolley.proxy.rlwy.net:12111/railway
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_ID = 1364134027585523772
