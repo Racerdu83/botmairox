@@ -11,11 +11,11 @@ OWNER_ROLE_ID = 1364134027585523772
 LOG_ID = 1365709885693493318
 
 # Infos PostgreSQL
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_DATABASE = os.getenv("DB_DATABASE")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
+DB_USER = os.getenv("PGUSER")
+DB_PASSWORD = os.getenv("PGPASSWORD")
+DB_DATABASE = os.getenv("PGDATABASE")
+DB_HOST = os.getenv("PGHOST")
+DB_PORT = os.getenv("PGPORT")
 
 intents = discord.Intents.default()
 intents.members = True
