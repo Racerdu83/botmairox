@@ -6,7 +6,12 @@ import itertools
 import os
 
 # --- Variables d'environnement pour PostgreSQL ---
-DATABASE_URL = f"postgresql://PGPASSWORD=FefacmmQARoFgNdiEiLomPTDXkAYuTje psql -h trolley.proxy.rlwy.net -U postgres -p 12111 -d railway
+PGUSER = os.getenv("PGUSER")
+PGPASSWORD = os.getenv("PGPASSWORD")
+PGHOST = os.getenv("PGHOST")
+PGPORT = os.getenv("PGPORT")
+PGDATABASE = os.getenv("PGDATABASE")
+DATABASE_URL = f"postgresql://{PGUSER}:{PGPASSWORD}@{PGHOST}:{PGPORT}/{PGDATABASE}"
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 OWNER_ROLE_ID = 1364134027585523772
@@ -29,6 +34,16 @@ async def setup_database():
                 intro TEXT,
                 outro TEXT,
                 message_id BIGINT
+            );
+        """)
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS tags (
+                id SERIAL PRIMARY KEY,
+                position INTEGER,
+                emoji TEXT,
+                name TEXT,
+                link TEXT,
+                comment TEXT
             );
         """)
 
