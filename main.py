@@ -6,7 +6,7 @@ import itertools
 import os
 from discord import Embed
 
-TOKEN = "MTM2..."  # Ton token (je laisse coupé pour l'exemple)
+TOKEN = "MTM2NDYyMTI4NDYyNDgyNjQ4OQ.G_D73O.CkjCDjNYYEFpg1yXr8LQs9o5cI8Cangn6Rxn3U"  # Ton token
 OWNER_ROLE_ID = 1364134027585523772
 LOG_ID = 1365709885693493318
 
