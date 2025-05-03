@@ -1,237 +1,198 @@
 import discord
-from discord.ext import commands, tasks
-from discord import app_commands, Embed
-import asyncpg
-import itertools
+from discord.ext import commands
+from discord import app_commands
+import json
+import re
 import os
 
-# --- Variables d'environnement pour PostgreSQL ---
-PGUSER = os.getenv("PGUSER")
-PGPASSWORD = os.getenv("PGPASSWORD")
-PGHOST = os.getenv("PGHOST")
-PGPORT = os.getenv("PGPORT")
-PGDATABASE = os.getenv("PGDATABASE")
-DATABASE_URL = f"postgresql://{PGUSER}:{PGPASSWORD}@{PGHOST}:{PGPORT}/{PGDATABASE}"
-
-TOKEN = os.getenv("DISCORD_TOKEN")
-OWNER_ROLE_ID = 1364134027585523772
-LOG_ID = 1365709885693493318
+GUILD_ID = 1364133729114652742 #Remplace par ton ID de serveur
+TAG_CHANNEL_ID = 1367803606354497627
+LOG_CHANNEL_ID = 1365709885693493318
+ADMIN_ROLE_ID = 1364134027585523772
 
 intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# DATABASE SETUP
-async def setup_database():
-    bot.db = await asyncpg.create_pool(DATABASE_URL)
-    async with bot.db.acquire() as connection:
-        await connection.execute("""
-            CREATE TABLE IF NOT EXISTS directories (
-                id SERIAL PRIMARY KEY,
-                channel_id BIGINT UNIQUE,
-                intro TEXT,
-                outro TEXT,
-                message_id BIGINT
-            );
-        """)
-        await connection.execute("""
-            CREATE TABLE IF NOT EXISTS tags (
-                id SERIAL PRIMARY KEY,
-                position INTEGER,
-                emoji TEXT,
-                name TEXT,
-                link TEXT,
-                comment TEXT
-            );
-        """)
+LANG_INTRO_OUTRO = {
+    "fr": {"intro": "# ``🏷️``__Voici la liste des tags__ :", "outro": "Prenez vos TAGS en https://discord.com/channels/1364133729114652742/1364149203764248656."},
+    "en": {"intro": "# ``🏷️`` __Here are the available tags__ :", "outro": "Go on https://discord.com/channels/1364133729114652742/1367834060361175040 to get your TAGS."},
+    "es": {"intro": "# ``🏷️`` __Aquí están las etiquetas disponibles__ :", "outro": " https://discord.com/channels/1364133729114652742/1367834342587498639 para obtener tus TAGS."}
+}
 
-# Vérification du rôle du propriétaire
-async def has_role_by_id(interaction: discord.Interaction, role_id: int):
-    role = discord.utils.get(interaction.guild.roles, id=role_id)
-    return role in interaction.user.roles if role else False
+TUTOS = {
+    "fr": {
+        "title": "📘 Tutoriel : Personnaliser ton tag",
+        "description": (
+            "# Bienvenue dans le tutoriel de personnalisation de ton profil !\n\n"
+            "## **1. Accès au profil :**\n"
+            "### Rends-toi dans la section dédiée à la personnalisation du serveur.\n\n"
+            "## **2. Choix du tag :**\n"
+            "### Choisis le tag qui te plaît dans la liste disponible.\n\n"
+            "## **3. Activation :**\n"
+            "### Ton tag sera automatiquement appliqué à ton profil.\n\n"
+            "💡 *__Pense à mettre le tag <#1364264678062293142> dans ta bio pour le rendre visible partout !__*"
+        ),
+        "image": "https://cdn.discordapp.com/attachments/1364488298873225248/1364488520801980416/image.png"
+    },
+    "en": {
+        "title": "📘 Tutorial: Customize Your Tag",
+        "description": (
+            "# Welcome to the tag customization tutorial!\n\n"
+            "## **1. Access your profile:**\n"
+            "### Go to the server’s customization section.\n\n"
+            "## **2. Choose your tag:**\n"
+            "### Pick your favorite tag from the available list.\n\n"
+            "## **3. Activation:**\n"
+            "### Your tag will be automatically applied to your profile.\n\n"
+            "💡 *__Don't forget to add the tag <#1367834097120055349> in your bio to make it visible everywhere !__*"
+        ),
+        "image": "https://cdn.discordapp.com/attachments/1364488298873225248/1364488520801980416/image.png"
+    },
+    "es": {
+        "title": "📘 Tutorial: Personaliza tu Tag",
+        "description": (
+            "# ¡Bienvenido al tutorial de personalización de tags!\n\n"
+            "## **1. Accede a tu perfil:**\n"
+            "### Ve a la sección de personalización del servidor.\n\n"
+            "## **2. Elige tu tag:**\n"
+            "### Selecciona tu tag favorito de la lista disponible.\n\n"
+            "## **3. Activación:**\n"
+            "### Tu tag se aplicará automáticamente a tu perfil.\n\n"
+            "💡 *__No olvides poner el tag <#1367835092411748412> en tu biografía para que sea visible en todas partes.__*"
+        ),
+        "image": "https://cdn.discordapp.com/attachments/1364488298873225248/1364488520801980416/image.png"
+    }
+}
 
-# --- COMMANDES ---
+def is_admin():
+    def predicate(interaction: discord.Interaction):
+        return any(role.id == ADMIN_ROLE_ID for role in interaction.user.roles)
+    return app_commands.check(predicate)
 
-@bot.tree.command(name="news_msg", description="📨 | ENVOIE LA LISTE DES TAGS")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
-async def news_msg(interaction: discord.Interaction, intro: str, outro: str):
-    await interaction.response.defer()
+async def load_tags(channel: discord.TextChannel):
+    async for message in channel.history(limit=100):
+        try:
+            data = json.loads(message.content)
+            if isinstance(data, list):
+                return data, message
+        except json.JSONDecodeError:
+            continue
+    return [], None
 
-    channel_id = interaction.channel.id
-    message = await interaction.channel.send("Création du répertoire...")
+async def save_tags(channel: discord.TextChannel, tags):
+    _, old_msg = await load_tags(channel)
+    content = json.dumps(tags, indent=2, ensure_ascii=False)
+    if old_msg:
+        await old_msg.edit(content=content)
+    else:
+        await channel.send(content)
 
-    async with bot.db.acquire() as connection:
-        await connection.execute(
-            "INSERT INTO directories (channel_id, intro, outro, message_id) VALUES ($1, $2, $3, $4) ON CONFLICT (channel_id) DO UPDATE SET intro = EXCLUDED.intro, outro = EXCLUDED.outro, message_id = EXCLUDED.message_id",
-            channel_id, intro, outro, message.id
-        )
+async def log_action(bot, text):
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(text)
 
-    await refresh_all_directories()
-    await interaction.followup.send("Répertoire créé et synchronisé ✅", ephemeral=True)
+@bot.event
+async def on_ready():
+    await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+    print(f"Connecté en tant que {bot.user}")
 
-@bot.tree.command(name="tag_add", description="➕ | Ajouter un tag")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
-async def tag_add(interaction: discord.Interaction, name: str, emoji: str, position: int, link: str, comment: str = None):
-    await interaction.response.defer()
-
-    async with bot.db.acquire() as connection:
-        await connection.execute("UPDATE tags SET position = position + 1 WHERE position >= $1", position)
-        await connection.execute(
-            "INSERT INTO tags (position, emoji, name, link, comment) VALUES ($1, $2, $3, $4, $5)",
-            position, emoji, name, link, comment
-        )
-
-    await refresh_all_directories()
-    await interaction.followup.send(f"Tag **{name}** ajouté ✅", ephemeral=True)
-
-@bot.tree.command(name="remove_tag", description="🗑️ | Supprimer un tag existant")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
-async def remove_tag(interaction: discord.Interaction, position: int):
-    await interaction.response.defer()
-
-    async with bot.db.acquire() as connection:
-        tag = await connection.fetchrow("SELECT * FROM tags WHERE position = $1", position)
-        if not tag:
-            await interaction.followup.send("❌ Aucun tag trouvé à cette position.", ephemeral=True)
+@bot.tree.command(name="tag", description="Afficher un tag", guild=discord.Object(id=GUILD_ID))
+@app_commands.describe(name="Nom du tag à afficher")
+async def tag(interaction: discord.Interaction, name: str):
+    channel = bot.get_channel(TAG_CHANNEL_ID)
+    tags, _ = await load_tags(channel)
+    for tag in tags:
+        if tag["name"].lower() == name.lower():
+            await interaction.response.send_message(f"{tag['emoji']} **{tag['name']}**\n{tag['link']}")
             return
+    await interaction.response.send_message("❌ Tag introuvable.")
 
-        await connection.execute("DELETE FROM tags WHERE position = $1", position)
-        await connection.execute("UPDATE tags SET position = position - 1 WHERE position > $1", position)
-
-    await refresh_all_directories()
-    await interaction.followup.send(f"✅ Tag position **{position}** supprimé.", ephemeral=True)
-
-@bot.tree.command(name="tag", description="📦 | Livrée le Liens d'un TAGS")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
-async def show_tags(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-
-    async with bot.db.acquire() as connection:
-        tags = await connection.fetch("SELECT id, emoji, name, link FROM tags ORDER BY position ASC")
-
-    if not tags:
-        await interaction.followup.send("Aucun tag disponible ❌")
+@bot.tree.command(name="tag-add", description="Ajouter un tag", guild=discord.Object(id=GUILD_ID))
+@is_admin()
+@app_commands.describe(emoji="Emoji", name="Nom du tag", link="Lien associé")
+async def tag_add(interaction: discord.Interaction, emoji: str, name: str, link: str):
+    channel = bot.get_channel(TAG_CHANNEL_ID)
+    tags, _ = await load_tags(channel)
+    if any(t["name"].lower() == name.lower() for t in tags):
+        await interaction.response.send_message("❌ Un tag avec ce nom existe déjà.")
         return
+    tags.append({"emoji": emoji, "name": name, "link": link})
+    await save_tags(channel, tags)
+    await log_action(bot, f"🟢 Tag ajouté : {emoji} {name} - {link}")
+    await interaction.response.send_message("✅ Tag ajouté.")
 
-    class TagButton(discord.ui.Button):
-        def __init__(self, tag_id, emoji, name, link):
-            super().__init__(label=name, emoji=emoji, style=discord.ButtonStyle.primary)
-            self.tag_link = link
-
-        async def callback(self, interaction: discord.Interaction):
-            await interaction.response.send_message(f"{self.tag_link}", ephemeral=False)
-
-    view = discord.ui.View()
+@bot.tree.command(name="tag-edit", description="Modifier un tag", guild=discord.Object(id=GUILD_ID))
+@is_admin()
+@app_commands.describe(name="Nom du tag à modifier", new_emoji="Nouvel emoji", new_name="Nouveau nom", new_link="Nouveau lien")
+async def tag_edit(interaction: discord.Interaction, name: str, new_emoji: str = None, new_name: str = None, new_link: str = None):
+    channel = bot.get_channel(TAG_CHANNEL_ID)
+    tags, _ = await load_tags(channel)
     for tag in tags:
-        tag_id, emoji, name, link = tag.values()
-        view.add_item(TagButton(tag_id, emoji, name, link))
+        if tag["name"].lower() == name.lower():
+            if new_emoji: tag["emoji"] = new_emoji
+            if new_name: tag["name"] = new_name
+            if new_link: tag["link"] = new_link
+            await save_tags(channel, tags)
+            await log_action(bot, f"🟡 Tag modifié : {name}")
+            await interaction.response.send_message("✅ Tag modifié.")
+            return
+    await interaction.response.send_message("❌ Tag introuvable.")
 
-    await interaction.followup.send("Voici tous les tags disponibles :", view=view)
-
-@bot.tree.command(name="tag_edit", description="✏️ | Modifier un tag existant")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
-async def tag_edit(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-
-    async with bot.db.acquire() as connection:
-        tags = await connection.fetch("SELECT id, position, emoji, name FROM tags ORDER BY position ASC")
-
-    if not tags:
-        await interaction.followup.send("Aucun tag à modifier ❌")
+@bot.tree.command(name="remove-tag", description="Supprimer un tag", guild=discord.Object(id=GUILD_ID))
+@is_admin()
+@app_commands.describe(name="Nom du tag à supprimer")
+async def remove_tag(interaction: discord.Interaction, name: str):
+    channel = bot.get_channel(TAG_CHANNEL_ID)
+    tags, _ = await load_tags(channel)
+    new_tags = [t for t in tags if t["name"].lower() != name.lower()]
+    if len(tags) == len(new_tags):
+        await interaction.response.send_message("❌ Tag introuvable.")
         return
+    await save_tags(channel, new_tags)
+    await log_action(bot, f"🔴 Tag supprimé : {name}")
+    await interaction.response.send_message("✅ Tag supprimé.")
 
-    class EditButton(discord.ui.Button):
-        def __init__(self, tag_id, name):
-            super().__init__(label=name, style=discord.ButtonStyle.secondary)
-            self.tag_id = tag_id
+@bot.tree.command(name="news-msg", description="Envoyer la liste des tags", guild=discord.Object(id=GUILD_ID))
+@is_admin()
+@app_commands.describe(lang="Langue (fr, en, es)")
+async def news_msg(interaction: discord.Interaction, lang: str):
+    lang = lang.lower()
+    if lang not in LANG_INTRO_OUTRO:
+        await interaction.response.send_message("❌ Langue invalide.")
+        return
+    intro = LANG_INTRO_OUTRO[lang]["intro"]
+    outro = LANG_INTRO_OUTRO[lang]["outro"]
+    channel = bot.get_channel(TAG_CHANNEL_ID)
+    tags, _ = await load_tags(channel)
+    body = "\n".join([f"{t['emoji']} **{t['name']}**" for t in tags])
+    await interaction.response.send_message(f"{intro}\n\n{body}\n\n{outro}")
 
-        async def callback(self, interaction: discord.Interaction):
-            modal = EditTagModal(self.tag_id)
-            await interaction.response.send_modal(modal)
+@bot.tree.command(name="tuto-fr", description="Tutoriel en français", guild=discord.Object(id=GUILD_ID))
+async def tuto_fr(interaction: discord.Interaction):
+    await send_tuto(interaction, "fr")
 
-    view = discord.ui.View()
-    for tag in tags:
-        tag_id, position, emoji, name = tag.values()
-        view.add_item(EditButton(tag_id, f"{emoji} {name}"))
 
-    await interaction.followup.send("Sélectionnez un tag à modifier :", view=view)
+@bot.tree.command(name="tuto-en", description="Tutorial in English", guild=discord.Object(id=GUILD_ID))
+async def tuto_en(interaction: discord.Interaction):
+    await send_tuto(interaction, "en")
 
-class EditTagModal(discord.ui.Modal, title="Modifier le tag"):
-    new_name = discord.ui.TextInput(label="Nouveau nom", required=False)
-    new_emoji = discord.ui.TextInput(label="Nouvel emoji", required=False)
-    new_link = discord.ui.TextInput(label="Nouveau lien", required=False)
-    new_comment = discord.ui.TextInput(label="Nouveau commentaire", required=False)
 
-    def __init__(self, tag_id):
-        super().__init__()
-        self.tag_id = tag_id
+@bot.tree.command(name="tuto-es", description="Tutorial en español", guild=discord.Object(id=GUILD_ID))
+async def tuto_es(interaction: discord.Interaction):
+    await send_tuto(interaction, "es")
 
-    async def on_submit(self, interaction: discord.Interaction):
-        async with bot.db.acquire() as connection:
-            tag = await connection.fetchrow("SELECT position, emoji, name, link, comment FROM tags WHERE id = $1", self.tag_id)
-            if not tag:
-                await interaction.response.send_message("❌ Tag introuvable.", ephemeral=True)
-                return
 
-            await connection.execute("""
-                UPDATE tags SET name = COALESCE($1, name), emoji = COALESCE($2, emoji), link = COALESCE($3, link), comment = COALESCE($4, comment)
-                WHERE id = $5
-            """, self.new_name.value or tag["name"], self.new_emoji.value or tag["emoji"], self.new_link.value or tag["link"], self.new_comment.value or tag["comment"], self.tag_id)
+async def send_tuto(interaction: discord.Interaction, lang: str):
+    tuto_data = TUTOS.get(lang, TUTOS["fr"])
 
-        await refresh_all_directories()
-        await interaction.response.send_message("✅ Tag modifié avec succès.", ephemeral=True)
-
-async def refresh_all_directories():
-    async with bot.db.acquire() as connection:
-        tags = await connection.fetch("SELECT * FROM tags ORDER BY position ASC")
-
-        body = ""
-        for tag in tags:
-            _, position, emoji, name, link, comment = tag.values()
-            body += f"## {emoji} {name}\n"
-            if comment:
-                body += f"*{comment}*\n"
-
-        directories = await connection.fetch("SELECT channel_id, intro, outro, message_id FROM directories")
-
-        for directory in directories:
-            channel = bot.get_channel(directory["channel_id"])
-            if not channel:
-                continue
-            try:
-                msg = await channel.fetch_message(directory["message_id"])
-                content = f"{directory['intro']}\n\n{body}\n{directory['outro']}"
-                await msg.edit(content=content)
-            except Exception:
-                continue
-
-@bot.tree.command(name="tuto", description="🧐 | Dire aux gens comment installer un TAG")
-@app_commands.check(lambda interaction: has_role_by_id(interaction, OWNER_ROLE_ID))
-async def show_tuto(interaction: discord.Interaction):
-    embed = Embed(
-        title="Personnalisation du Profil",
-        description="Voici comment personnaliser ton profil et sélectionner un tag. Suis les étapes ci-dessous pour activer ton tag partout !",
-        color=0x3498db
+    embed = discord.Embed(
+        title=tuto_data["title"],
+        description=tuto_data["description"],
+        color=discord.Color.blue()
     )
-    embed.add_field(name="Étape 1", value="Rejoins le serveur et accède à la section de personnalisation de ton profil.", inline=False)
-    embed.add_field(name="Étape 2", value="Sélectionne le tag que tu souhaites dans la liste des options disponibles.", inline=False)
-    embed.add_field(name="Étape 3", value="Une fois sélectionné, ton tag sera activé partout.", inline=False)
-    embed.add_field(name="Note", value="Pense à mettre à jour ton profil avec le tag #📍〃preuve pour le rendre visible !", inline=False)
-    embed.set_image(url="https://cdn.discordapp.com/attachments/1364488298873225248/1364488520801980416/image.png")
+    embed.set_image(url=tuto_data["image"])
 
     await interaction.response.send_message(embed=embed, ephemeral=False)
 
-# --- READY EVENT ---
-@bot.event
-async def on_ready():
-    print(f"✅ {bot.user} est prêt !")
-    await setup_database()
-    try:
-        synced = await bot.tree.sync()
-        print(f"🔃 {len(synced)} commandes synchronisées")
-    except Exception as e:
-        print(f"Erreur de sync : {e}")
-
-bot.run(TOKEN)
+bot.run(os.getenv("DISCORD_TOKEN"))
