@@ -80,25 +80,6 @@ async def load_tags(channel: discord.TextChannel):
             except json.JSONDecodeError:
                 continue
     return tags
-
-async def save_tag(channel: discord.TextChannel, tag: dict):
-    tags = await load_tags(channel)
-    for existing_tag in tags:
-        if existing_tag["name"].lower() == tag["name"].lower():
-            try:
-                json_data = json.dumps(tag, ensure_ascii=False, indent=2)
-                await existing_tag["__msg__"].edit(content=json_data)
-                return
-            except Exception as e:
-                print(f"Erreur édition du tag {tag['name']}: {e}")
-                return
-    # Si le tag n'existe pas encore, on envoie un nouveau message
-    try:
-        json_data = json.dumps(tag, ensure_ascii=False, indent=2)
-        await channel.send(json_data)
-    except Exception as e:
-        print(f"Erreur envoi tag {tag['name']}: {e}")
-
 async def delete_tag(channel: discord.TextChannel, name: str):
     tags = await load_tags(channel)
     for tag in tags:
@@ -111,6 +92,32 @@ async def log_action(bot, text):
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         await log_channel.send(text)
+async def update_news_msg(channel: discord.TextChannel):
+    # Charger tous les tags
+    tags = await load_tags(channel)
+
+    # Construire le message
+    body = "\n".join([f"## {t['emoji']} **{t['name']}**\n{t['link']}" for t in tags])
+
+    # Rechercher un message existant avec les tags
+    news_msg = None
+    async for message in channel.history(limit=200):
+        if message.author == channel.guild.me and message.content.startswith("# ``🏷️``"):
+            news_msg = message
+            break
+
+    # Si un message existe, on le réédite
+    if news_msg:
+        try:
+            await news_msg.edit(content=f"{LANG_INTRO_OUTRO['fr']['intro']}\n\n{body}\n\n{LANG_INTRO_OUTRO['fr']['outro']}")
+        except Exception as e:
+            print(f"Erreur lors de la mise à jour du message des tags : {e}")
+    # Si aucun message n'existe, on crée un nouveau message
+    else:
+        try:
+            await channel.send(f"{LANG_INTRO_OUTRO['fr']['intro']}\n\n{body}\n\n{LANG_INTRO_OUTRO['fr']['outro']}")
+        except Exception as e:
+            print(f"Erreur lors de l'envoi du message des tags : {e}")
 @bot.event
 async def on_ready():
     await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
@@ -137,42 +144,43 @@ async def tag(interaction: discord.Interaction, name: str):
 @bot.tree.command(name="tag-add", description="Ajouter un tag", guild=discord.Object(id=GUILD_ID))
 @is_admin()
 @app_commands.describe(emoji="Emoji", name="Nom du tag", link="Lien associé")
-@app_commands.checks.has_role(1364134027585523772)
 async def tag_add(interaction: discord.Interaction, emoji: str, name: str, link: str):
-        try:
-            # Récupérer le canal
-            channel = bot.get_channel(TAG_CHANNEL_ID)
-            if not channel:
-                await interaction.response.send_message("❌ Le canal spécifié est introuvable.")
-                return
+            try:
+                # Récupérer le canal des tags
+                channel = bot.get_channel(TAG_CHANNEL_ID)
+                if not channel:
+                    await interaction.response.send_message("❌ Le canal spécifié est introuvable.")
+                    return
 
-            # Charger les tags existants
-            tags = await load_tags(channel)
-            if any(t["name"].lower() == name.lower() for t in tags):
-                await interaction.response.send_message("❌ Un tag avec ce nom existe déjà.")
-                return
+                # Charger les tags existants
+                tags = await load_tags(channel)
 
-            # Créer un nouveau tag
-            new_tag = {"emoji": emoji, "name": name, "link": link}
+                # Vérifier si un tag avec ce nom existe déjà
+                existing_tag = next((t for t in tags if t["name"].lower() == name.lower()), None)
+                if existing_tag:
+                    await interaction.response.send_message(f"❌ Un tag avec le nom '{name}' existe déjà.")
+                    return
 
-            # Sauvegarder ce nouveau tag dans la liste des tags
-            tags.append(new_tag)
+                # Créer un nouveau tag
+                new_tag = {"emoji": emoji, "name": name, "link": link}
 
-            # Sauvegarder le tag (passer un seul tag, pas une liste)
-            await save_tag(channel, new_tag)  # Passer un seul tag
+                # Sauvegarder ce nouveau tag dans la liste des tags
+                await save_tag(channel, new_tag)  # Sauvegarde du tag
 
-            # Log de l'ajout du tag
-            await log_action(bot, f"🟢 Tag ajouté : {emoji} {name} - {link}")
+                # Mettre à jour le message contenant la liste des tags
+                await update_news_msg(channel)
 
-            # Envoyer une réponse de succès
-            await interaction.response.send_message(f"✅ Tag ajouté : {emoji} {name} - {link}")
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Une erreur est survenue lors de l'ajout du tag : {str(e)}")
-            print(f"Erreur dans la commande /tag-add: {e}")
+                # Log de l'ajout du tag
+                await log_action(bot, f"🟢 Tag ajouté : {emoji} {name} - {link}")
+
+                # Envoyer une réponse de succès
+                await interaction.response.send_message(f"✅ Tag ajouté : {emoji} {name} - {link}")
+            except Exception as e:
+                await interaction.response.send_message(f"❌ Une erreur est survenue lors de l'ajout du tag : {str(e)}")
+                print(f"Erreur dans la commande /tag-add: {e}")
 @bot.tree.command(name="tag-edit", description="Modifier un tag", guild=discord.Object(id=GUILD_ID))
 @is_admin()
 @app_commands.describe(name="Nom du tag à modifier", new_emoji="Nouvel emoji", new_name="Nouveau nom", new_link="Nouveau lien")
-@app_commands.checks.has_role(1364134027585523772)
 async def tag_edit(interaction: discord.Interaction, name: str, new_emoji: str = None, new_name: str = None, new_link: str = None):
     channel = bot.get_channel(TAG_CHANNEL_ID)
     tags = await load_tags(channel)
@@ -181,17 +189,26 @@ async def tag_edit(interaction: discord.Interaction, name: str, new_emoji: str =
             if new_emoji: tag["emoji"] = new_emoji
             if new_name: tag["name"] = new_name
             if new_link: tag["link"] = new_link
-            await save_tag(channel, tags)
+
+            # Sauvegarder le tag modifié
+            await save_tag(channel, tag)  # Sauvegarder le seul tag modifié
+
+            # Log de la modification
             await log_action(bot, f"🟡 Tag modifié : {name}")
-            await interaction.response.send_message("✅ Tag modifié.")
+
+            await interaction.response.send_message(f"✅ Tag modifié : {tag['name']}")
+
+            # Recharger la liste des tags après modification
+            await load_tags(channel)
+
             return
+
     await interaction.response.send_message("❌ Tag introuvable.")
-    await save_tag(channel, tag)
+
 
 @bot.tree.command(name="remove-tag", description="Supprimer un tag", guild=discord.Object(id=GUILD_ID))
 @is_admin()
 @app_commands.describe(name="Nom du tag à supprimer")
-@app_commands.checks.has_role(1364134027585523772)
 async def remove_tag(interaction: discord.Interaction, name: str):
     channel = bot.get_channel(TAG_CHANNEL_ID)
     tags = await load_tags(channel)
@@ -199,14 +216,8 @@ async def remove_tag(interaction: discord.Interaction, name: str):
     if len(tags) == len(new_tags):
         await interaction.response.send_message("❌ Tag introuvable.")
         return
-    deleted = await delete_tag(channel, name)
-    if deleted:
-        await log_action(bot, f"🔴 Tag supprimé : {name}")
-        await interaction.response.send_message("✅ Tag supprimé.")
-    else:
-        await interaction.response.send_message("❌ Tag introuvable.")
-    await log_action(bot, f"🔴 Tag supprimé : {name}")
-    await interaction.response.send_message("✅ Tag supprimé.")
+
+    # Supprimer le tag
     deleted = await delete_tag(channel, name)
     if deleted:
         await log_action(bot, f"🔴 Tag supprimé : {name}")
@@ -214,28 +225,52 @@ async def remove_tag(interaction: discord.Interaction, name: str):
     else:
         await interaction.response.send_message("❌ Tag introuvable.")
 
-@bot.tree.command(name="news-msg", description="Envoyer la liste des tags", guild=discord.Object(id=GUILD_ID))
+    # Recharger la liste des tags après suppression
+    await load_tags(channel)
+@bot.tree.command(name="news-msg", description="Envoyer un message de news avec les tags", guild=discord.Object(id=GUILD_ID))
 @is_admin()
 @app_commands.describe(lang="Langue (fr, en, es)")
-@app_commands.checks.has_role(1364134027585523772)
 async def news_msg(interaction: discord.Interaction, lang: str):
-    lang = lang.lower()
-    if lang not in LANG_INTRO_OUTRO:
-        await interaction.response.send_message("❌ Langue invalide.", ephemeral=True)
-        return
+                                        try:
+                                            # Vérifier la langue
+                                            lang = lang.lower()
+                                            if lang not in LANG_INTRO_OUTRO:
+                                                await interaction.response.send_message("❌ Langue invalide.", ephemeral=True)
+                                                return
 
-    intro = LANG_INTRO_OUTRO[lang]["intro"]
-    outro = LANG_INTRO_OUTRO[lang]["outro"]
-    channel = bot.get_channel(TAG_CHANNEL_ID)
-    tags = await load_tags(channel)
-    body = "\n".join([f"{t['emoji']} **{t['name']}**" for t in tags])
+                                            # Obtenir l'intro et l'outro en fonction de la langue
+                                            intro = LANG_INTRO_OUTRO[lang]["intro"]
+                                            outro = LANG_INTRO_OUTRO[lang]["outro"]
 
-    # Envoie le message dans le salon où la commande est utilisée
-    await interaction.channel.send(f"{intro}\n\n{body}\n\n{outro}")
+                                            # Charger les tags disponibles
+                                            channel = bot.get_channel(TAG_CHANNEL_ID)
+                                            tags = await load_tags(channel)
 
-    # Optionnel : accuse réception discrètement
-    await interaction.response.send_message("✅ Message envoyé dans le salon.", ephemeral=True)
+                                            # Créer le contenu du message avec tous les tags, ajoutant "##" pour agrandir les noms des tags
+                                            body = "\n".join([f"## {tag['emoji']} **{tag['name']}**" for tag in tags])
 
+                                            # Construire le message final
+                                            total_content = f"{intro}\n\n{body}\n\n{outro}"
+
+                                            # Diviser le message en morceaux de 2000 caractères maximum
+                                            max_length = 2000  # Limite de Discord par message
+                                            parts = []
+                                            while len(total_content) > max_length:
+                                                # On trouve la dernière coupe possible sans couper un tag en deux
+                                                cut_point = total_content.rfind("\n", 0, max_length)
+                                                parts.append(total_content[:cut_point])
+                                                total_content = total_content[cut_point:].lstrip("\n")  # On retire le premier "\n" pour ne pas le dupliquer
+                                            parts.append(total_content)  # Ajouter le reste du message
+
+                                            # Envoyer chaque morceau en toute sécurité
+                                            for part in parts:
+                                                await interaction.channel.send(part)
+
+                                            await interaction.response.send_message("✅ Message envoyé en plusieurs parties.")
+
+                                        except Exception as e:
+                                            await interaction.response.send_message(f"❌ Une erreur est survenue : {str(e)}")
+                                            print(f"Erreur dans la commande /news-msg: {e}")
 @bot.tree.command(name="tuto-fr", description="Tutoriel en français", guild=discord.Object(id=GUILD_ID))
 async def tuto_fr(interaction: discord.Interaction):
     await send_tuto(interaction, "fr")
